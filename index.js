@@ -21,159 +21,163 @@ const client = new MongoClient(process.env.MONGODB_URI, {
 async function run() {
   try {
     await client.connect();
-
     console.log("✅ MongoDB Connected");
 
     const database = client.db("Fable-Ebook-Sharing-Platform");
-    const booksCollection = database.collection("books");
-    const purchasesCollection = database.collection("purchases");
 
-    
+    const booksCollection = database.collection("books");
+    const usersCollection = database.collection("user");
+    const purchasesCollection = database.collection("purchases");
+    const bookmarksCollection = database.collection("bookmarks");
+
+    // ================= BOOKS =================
     app.get("/api/books", async (req, res) => {
       const query = {};
-      console.log(req.query.email);
-      if(req.query.email){ 
-
+      if (req.query.email) {
         query.authorEmail = req.query.email;
       }
 
-      const cursor = booksCollection.find(query);
-      const books = await cursor.toArray();
+      const books = await booksCollection.find(query).toArray();
       res.send(books);
-
-
-
     });
-
 
     app.get("/api/books/:id", async (req, res) => {
       const id = req.params.id;
-            const query = {
-                _id: new ObjectId(id)
-            }
-            const result = await booksCollection.findOne(query);
-            res.send(result);
+
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid book id" });
+      }
+
+      const result = await booksCollection.findOne({ _id: new ObjectId(id) });
+
+      if (!result) {
+        return res.status(404).send({ message: "Book not found" });
+      }
+
+      res.send(result);
     });
 
     app.post("/api/books", async (req, res) => {
-      try {
-        const book = req.body;
+      const result = await booksCollection.insertOne(req.body);
+      res.status(201).send(result);
+    });
 
-        const result = await booksCollection.insertOne(book);
+    // ================= PURCHASES =================
+    app.post("/api/purchases", async (req, res) => {
+      const { bookId, buyerEmail, buyerName, stripeSessionId } = req.body;
 
-        res.status(201).send(result);
-      } catch (error) {
-        console.error(error);
-        res.status(500).send({
-          success: false,
-          message: error.message,
-        });
+      const existing = await purchasesCollection.findOne({ bookId, buyerEmail });
+      if (existing) return res.send(existing);
+
+      if (!ObjectId.isValid(bookId)) {
+        return res.status(400).send({ message: "Invalid book id" });
       }
+
+      const book = await booksCollection.findOne({ _id: new ObjectId(bookId) });
+      if (!book) return res.status(404).send({ message: "Book not found" });
+
+      const purchase = {
+        bookId,
+        bookTitle: book.title,
+        bookCoverImage: book.coverImage,
+        price: book.price,
+        buyerEmail,
+        buyerName: buyerName || buyerEmail,
+        writerEmail: book.authorEmail,
+        writerName: book.authorName,
+        stripeSessionId: stripeSessionId || null,
+        purchasedAt: new Date(),
+      };
+
+      const result = await purchasesCollection.insertOne(purchase);
+
+      await booksCollection.updateOne(
+        { _id: new ObjectId(bookId) },
+        { $inc: { sales: 1 } }
+      );
+
+      res.status(201).send({ ...purchase, _id: result.insertedId });
     });
 
-    // Create a purchase (idempotent — safe to call more than once for the same buyer+book)
-app.post("/api/purchases", async (req, res) => {
-  try {
-    const { bookId, buyerEmail, buyerName, stripeSessionId } = req.body;
+    app.get("/api/purchases/check", async (req, res) => {
+      const purchase = await purchasesCollection.findOne({
+        bookId: req.query.bookId,
+        buyerEmail: req.query.email,
+      });
 
-    if (!bookId || !buyerEmail) {
-      return res.status(400).send({ message: "bookId and buyerEmail are required" });
-    }
-
-    // Already recorded? Return the existing purchase instead of duplicating
-    const existing = await purchasesCollection.findOne({ bookId, buyerEmail });
-    if (existing) {
-      return res.status(200).send(existing);
-    }
-
-    const book = await booksCollection.findOne({ _id: new ObjectId(bookId) });
-    if (!book) {
-      return res.status(404).send({ message: "Book not found" });
-    }
-
-    const purchase = {
-      bookId,
-      bookTitle: book.title,
-      bookCoverImage: book.coverImage,
-      price: book.price,
-      buyerEmail,
-      buyerName: buyerName || buyerEmail,
-      writerEmail: book.authorEmail,
-      writerName: book.authorName,
-      stripeSessionId: stripeSessionId || null,
-      purchasedAt: new Date(),
-    };
-
-    const result = await purchasesCollection.insertOne(purchase);
-
-    await booksCollection.updateOne(
-      { _id: new ObjectId(bookId) },
-      { $inc: { sales: 1 } }
-    );
-
-    res.status(201).send({ ...purchase, _id: result.insertedId });
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({ success: false, message: error.message });
-  }
-});
-
-app.post("/api/purchases", async (req, res) => {
-  try {
-    const purchase = req.body;
-
-    const existing = await purchasesCollection.findOne({
-      bookId: purchase.bookId,
-      buyerEmail: purchase.buyerEmail,
+      res.send({ purchased: !!purchase });
     });
 
-    if (existing) {
-      return res.send(existing);
-    }
+    app.get("/api/purchases", async (req, res) => {
+      const result = await purchasesCollection
+        .find({ buyerEmail: req.query.email })
+        .toArray();
 
-    purchase.purchasedAt = new Date();
-    const result = await purchasesCollection.insertOne(purchase);
+      res.send(result);
+    });
 
-    res.status(201).send(result);
-  } catch (error) {
-    console.error(error);
-    res.status(500).send({ success: false, message: error.message });
-  }
-});
+    app.get("/api/sales", async (req, res) => {
+      const result = await purchasesCollection
+        .find({ writerEmail: req.query.email })
+        .toArray();
 
-app.get("/api/purchases/check", async (req, res) => {
-  const query = {
-    bookId: req.query.bookId,
-    buyerEmail: req.query.email,
-  };
+      res.send(result);
+    });
 
-  const purchase = await purchasesCollection.findOne(query);
-  res.send({ purchased: !!purchase });
-});
+    // ================= BOOKMARKS =================
+    app.post("/api/bookmarks", async (req, res) => {
+      const bookmark = req.body;
 
-app.get("/api/purchases", async (req, res) => {
-  const query = { buyerEmail: req.query.email };
-  const result = await purchasesCollection.find(query).toArray();
-  res.send(result);
-});
+      const existing = await bookmarksCollection.findOne({
+        bookId: bookmark.bookId,
+        userEmail: bookmark.userEmail,
+      });
 
-app.get("/api/sales", async (req, res) => {
-  const query = { writerEmail: req.query.email };
-  const result = await purchasesCollection.find(query).toArray();
-  res.send(result);
-});
+      if (existing) return res.send(existing);
+
+      bookmark.bookmarkedAt = new Date();
+      const result = await bookmarksCollection.insertOne(bookmark);
+
+      res.status(201).send(result);
+    });
+
+    app.delete("/api/bookmarks", async (req, res) => {
+      const result = await bookmarksCollection.deleteOne({
+        bookId: req.body.bookId,
+        userEmail: req.body.userEmail,
+      });
+
+      res.send(result);
+    });
+
+    app.get("/api/bookmarks/check", async (req, res) => {
+      const bookmark = await bookmarksCollection.findOne({
+        bookId: req.query.bookId,
+        userEmail: req.query.email,
+      });
+
+      res.send({ bookmarked: !!bookmark });
+    });
+
+    app.get("/api/bookmarks", async (req, res) => {
+      const result = await bookmarksCollection
+        .find({ userEmail: req.query.email })
+        .toArray();
+
+      res.send(result);
+    });
 
     app.get("/", (req, res) => {
       res.send("Fable Ebook API Running");
     });
 
+    // ✅ Only start listening once every route above is registered
+    app.listen(port, () => {
+      console.log(`🚀 Server running on port ${port}`);
+    });
   } catch (error) {
     console.error(error);
   }
 }
 
 run();
-
-app.listen(port, () => {
-  console.log(`🚀 Server running on port ${port}`);
-});
