@@ -26,12 +26,15 @@ async function run() {
 
     const database = client.db("Fable-Ebook-Sharing-Platform");
     const booksCollection = database.collection("books");
+    const purchasesCollection = database.collection("purchases");
 
-
+    
     app.get("/api/books", async (req, res) => {
       const query = {};
-      if(req.query.genre){ 
-        query.genre = req.query.genre;
+      console.log(req.query.email);
+      if(req.query.email){ 
+
+        query.authorEmail = req.query.email;
       }
 
       const cursor = booksCollection.find(query);
@@ -41,6 +44,7 @@ async function run() {
 
 
     });
+
 
     app.get("/api/books/:id", async (req, res) => {
       const id = req.params.id;
@@ -66,6 +70,98 @@ async function run() {
         });
       }
     });
+
+    // Create a purchase (idempotent — safe to call more than once for the same buyer+book)
+app.post("/api/purchases", async (req, res) => {
+  try {
+    const { bookId, buyerEmail, buyerName, stripeSessionId } = req.body;
+
+    if (!bookId || !buyerEmail) {
+      return res.status(400).send({ message: "bookId and buyerEmail are required" });
+    }
+
+    // Already recorded? Return the existing purchase instead of duplicating
+    const existing = await purchasesCollection.findOne({ bookId, buyerEmail });
+    if (existing) {
+      return res.status(200).send(existing);
+    }
+
+    const book = await booksCollection.findOne({ _id: new ObjectId(bookId) });
+    if (!book) {
+      return res.status(404).send({ message: "Book not found" });
+    }
+
+    const purchase = {
+      bookId,
+      bookTitle: book.title,
+      bookCoverImage: book.coverImage,
+      price: book.price,
+      buyerEmail,
+      buyerName: buyerName || buyerEmail,
+      writerEmail: book.authorEmail,
+      writerName: book.authorName,
+      stripeSessionId: stripeSessionId || null,
+      purchasedAt: new Date(),
+    };
+
+    const result = await purchasesCollection.insertOne(purchase);
+
+    await booksCollection.updateOne(
+      { _id: new ObjectId(bookId) },
+      { $inc: { sales: 1 } }
+    );
+
+    res.status(201).send({ ...purchase, _id: result.insertedId });
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ success: false, message: error.message });
+  }
+});
+
+app.post("/api/purchases", async (req, res) => {
+  try {
+    const purchase = req.body;
+
+    const existing = await purchasesCollection.findOne({
+      bookId: purchase.bookId,
+      buyerEmail: purchase.buyerEmail,
+    });
+
+    if (existing) {
+      return res.send(existing);
+    }
+
+    purchase.purchasedAt = new Date();
+    const result = await purchasesCollection.insertOne(purchase);
+
+    res.status(201).send(result);
+  } catch (error) {
+    console.error(error);
+    res.status(500).send({ success: false, message: error.message });
+  }
+});
+
+app.get("/api/purchases/check", async (req, res) => {
+  const query = {
+    bookId: req.query.bookId,
+    buyerEmail: req.query.email,
+  };
+
+  const purchase = await purchasesCollection.findOne(query);
+  res.send({ purchased: !!purchase });
+});
+
+app.get("/api/purchases", async (req, res) => {
+  const query = { buyerEmail: req.query.email };
+  const result = await purchasesCollection.find(query).toArray();
+  res.send(result);
+});
+
+app.get("/api/sales", async (req, res) => {
+  const query = { writerEmail: req.query.email };
+  const result = await purchasesCollection.find(query).toArray();
+  res.send(result);
+});
 
     app.get("/", (req, res) => {
       res.send("Fable Ebook API Running");
