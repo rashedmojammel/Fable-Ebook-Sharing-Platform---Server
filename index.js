@@ -57,6 +57,50 @@ async function run() {
       res.send(result);
     });
 
+    app.patch("/api/books/:id", async (req, res) => {
+      const id = req.params.id;
+      if(!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid book id" });
+      } 
+       const updateDoc = {
+    $set: {
+      title: req.body.title,
+      description: req.body.description,
+      genre: req.body.genre,
+      price: req.body.price,
+      coverImage: req.body.coverImage,
+    },
+  };
+      const result = await booksCollection.updateOne(
+        { _id: new ObjectId(id) },
+        updateDoc
+      );
+      res.send(result);
+
+    });
+    app.delete("/api/books/:id", async (req, res) => {
+      const id = req.params.id;
+      if(!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid book id" });
+      }
+
+      const result = await booksCollection.deleteOne({ _id: new ObjectId(id) });
+      res.send(result);
+    });
+
+    app.patch("/api/books/:id/status", async (req, res) => {
+      const id = req.params.id;
+      if(!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid book id" });
+      }
+
+      const result = await booksCollection.updateOne(
+        { _id: new ObjectId(id) },
+        { $set: { status: req.body.status } }
+      );
+      res.send(result);
+    });
+
     app.post("/api/books", async (req, res) => {
       const result = await booksCollection.insertOne(req.body);
       res.status(201).send(result);
@@ -171,7 +215,7 @@ async function run() {
       res.send("Fable Ebook API Running");
     });
 
-    // ✅ Only start listening once every route above is registered
+    
     app.listen(port, () => {
       console.log(`🚀 Server running on port ${port}`);
     });
