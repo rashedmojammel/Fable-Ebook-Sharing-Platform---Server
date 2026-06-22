@@ -10,6 +10,19 @@ app.use(express.json());
 
 const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
+const logger = (req,res , next) =>
+{
+  console.log('logger logged', req.params);
+  next();
+}
+
+const verifyToken = (req , res, next) =>
+{
+  console.log('headers', req.headers.authorization);
+  next();
+}
+
+
 const client = new MongoClient(process.env.MONGODB_URI, {
   serverApi: {
     version: ServerApiVersion.v1,
@@ -17,6 +30,8 @@ const client = new MongoClient(process.env.MONGODB_URI, {
     deprecationErrors: true,
   },
 });
+
+
 
 async function run() {
   try {
@@ -87,7 +102,7 @@ app.get("/api/writers/top", async (req, res) => {
       res.send(result);
     });
 
-    app.patch("/api/books/:id", async (req, res) => {
+    app.patch("/api/books/:id", logger, verifyToken, async (req, res) => {
       const id = req.params.id;
       if(!ObjectId.isValid(id)) {
         return res.status(400).send({ message: "Invalid book id" });
@@ -240,6 +255,99 @@ app.get("/api/writers/top", async (req, res) => {
 
       res.send(result);
     });
+    // ================= TRANSACTIONS =================
+// Paste inside run(), alongside your other routes.
+
+app.get("/api/transactions", async (req, res) => {
+  const transactions = await purchasesCollection.aggregate([
+    {
+      $project: {
+        type: { $literal: "purchase" },
+        userEmail: "$buyerEmail",
+        writerEmail: "$writerEmail",
+        bookTitle: "$bookTitle",
+        amount: "$price",
+        date: "$purchasedAt",
+      },
+    },
+    {
+      $unionWith: {
+        coll: "books",
+        pipeline: [
+          {
+            $project: {
+              type: { $literal: "publishing fee" },
+              userEmail: "$authorEmail",
+              writerEmail: "$authorEmail",
+              bookTitle: "$title",
+              amount: { $ifNull: ["$publishingFee", 0] },
+              date: "$createdAt",
+            },
+          },
+        ],
+      },
+    },
+    { $sort: { date: -1 } },
+  ]).toArray();
+
+  res.send(transactions);
+});
+
+// ================= ANALYTICS =================
+// Add inside run() in server.js
+
+app.get("/api/admin/analytics", async (req, res) => {
+  // --- Stat cards ---
+  const totalUsers   = await usersCollection.estimatedDocumentCount();
+  const totalWriters = await usersCollection.countDocuments({ role: "writer" });
+  const totalSold    = await purchasesCollection.estimatedDocumentCount();
+
+  const revenueAgg = await purchasesCollection.aggregate([
+    { $group: { _id: null, total: { $sum: { $toDouble: "$price" } } } },
+  ]).toArray();
+  const totalRevenue = revenueAgg[0]?.total ?? 0;
+
+  // --- Monthly sales (last 12 months) ---
+  const monthlySales = await purchasesCollection.aggregate([
+    {
+      $group: {
+        _id: {
+          year:  { $year:  "$purchasedAt" },
+          month: { $month: "$purchasedAt" },
+        },
+        sales:   { $sum: 1 },
+        revenue: { $sum: { $toDouble: "$price" } },
+      },
+    },
+    { $sort: { "_id.year": 1, "_id.month": 1 } },
+    { $limit: 12 },
+    {
+      $project: {
+        _id: 0,
+        month: {
+          $dateToString: {
+            format: "%b %Y",
+            date: {
+              $dateFromParts: { year: "$_id.year", month: "$_id.month", day: 1 },
+            },
+          },
+        },
+        sales:   1,
+        revenue: 1,
+      },
+    },
+  ]).toArray();
+
+  // --- Ebooks by genre ---
+  const byGenre = await booksCollection.aggregate([
+    { $group: { _id: "$genre", count: { $sum: 1 } } },
+    { $project: { _id: 0, genre: "$_id", count: 1 } },
+    { $sort: { count: -1 } },
+  ]).toArray();
+
+  res.send({ totalUsers, totalWriters, totalSold, totalRevenue, monthlySales, byGenre });
+});
+
 
     app.get("/", (req, res) => {
       res.send("Fable Ebook API Running");
