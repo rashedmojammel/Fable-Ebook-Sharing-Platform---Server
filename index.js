@@ -40,6 +40,36 @@ async function run() {
       const books = await booksCollection.find(query).toArray();
       res.send(books);
     });
+    // Latest 6 published ebooks for Featured section
+app.get("/api/books/featured", async (req, res) => {
+  const books = await booksCollection
+    .find({ status: "published" })
+    .sort({ createdAt: -1 })
+    .limit(6)
+    .toArray();
+
+  res.send(books);
+});
+
+// Top 3 writers by total sales count
+app.get("/api/writers/top", async (req, res) => {
+  const topWriters = await purchasesCollection
+    .aggregate([
+      {
+        $group: {
+          _id: "$writerEmail",
+          name: { $first: "$writerName" },
+          totalSales: { $sum: 1 },
+        },
+      },
+      { $sort: { totalSales: -1 } },
+      { $limit: 3 },
+    ])
+    .toArray();
+
+  res.send(topWriters);
+});
+
 
     app.get("/api/books/:id", async (req, res) => {
       const id = req.params.id;
@@ -167,7 +197,7 @@ async function run() {
 
       res.send(result);
     });
-
+    
     // ================= BOOKMARKS =================
     app.post("/api/bookmarks", async (req, res) => {
       const bookmark = req.body;
