@@ -135,6 +135,7 @@ app.get("/api/writers/top", async (req, res) => {
 
 
     app.get("/api/books/:id", async (req, res) => {
+
       const id = req.params.id;
 
       if (!ObjectId.isValid(id)) {
@@ -149,6 +150,7 @@ app.get("/api/writers/top", async (req, res) => {
 
       res.send(result);
     });
+    
 
     app.patch("/api/books/:id", verifyToken, verifyWriter,async (req, res) => {
       const id = req.params.id;
