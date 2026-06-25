@@ -12,7 +12,7 @@ const { MongoClient, ServerApiVersion, ObjectId } = require("mongodb");
 
 const logger = (req,res , next) =>
 {
-  console.log('logger logged', req.params);
+  // console.log('logger logged', req.params);
   next();
 }
 
@@ -308,7 +308,7 @@ app.get("/api/writers/top", async (req, res) => {
       res.send(result);
     });
     // ================= TRANSACTIONS =================
-// Paste inside run(), alongside your other routes.
+
 
 app.get("/api/transactions", verifyToken, verifyAdmin, async (req, res) => {
   const transactions = await purchasesCollection.aggregate([
@@ -346,7 +346,7 @@ app.get("/api/transactions", verifyToken, verifyAdmin, async (req, res) => {
 });
 
 // ================= ANALYTICS =================
-// Add inside run() in server.js
+
 
 app.get("/api/admin/analytics", async (req, res) => {
   // --- Stat cards ---
