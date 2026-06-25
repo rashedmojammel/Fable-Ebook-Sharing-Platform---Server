@@ -16,11 +16,6 @@ const logger = (req,res , next) =>
   next();
 }
 
-const verifyToken = (req , res, next) =>
-{
-  console.log('headers', req.headers.authorization);
-  next();
-}
 
 
 const client = new MongoClient(process.env.MONGODB_URI, {
@@ -44,6 +39,59 @@ async function run() {
     const usersCollection = database.collection("user");
     const purchasesCollection = database.collection("purchases");
     const bookmarksCollection = database.collection("bookmarks");
+    const sessionsCollection = database.collection("session");
+
+
+    //verfify token middleware
+    const verifyToken = async (req , res, next) =>
+{
+  const authHeader = req.headers.authorization;
+  if(!authHeader)
+  {
+    return res.status(401).send({message: 'Unauthorized access'});
+  }
+  const token = authHeader.split(' ')[1];
+  if(!token)
+  {
+    return res.status(403).send({message: 'Forbidden access'});
+  }
+  const query = { token: token };
+  const session = await sessionsCollection.findOne(query);
+  const userId = session?.userId;
+  console.log('userId', userId);
+  console.log('session', session);
+
+  const userQuery = { _id: new ObjectId(userId) };
+  const user = await usersCollection.findOne(userQuery);
+  req.user = user;
+
+  next();
+}
+const verifyReader = async(req, res, next) => {
+
+  if(req.user?.userRole !== 'reader')
+  {
+    return res.status(403).send({message: 'Forbidden access'});
+  }
+  next();
+}
+const verifyWriter = async(req, res, next) => {
+
+  if(req.user?.userRole !== 'writer') 
+{
+    return res.status(403).send({message: 'Forbidden access'});
+  }   
+  next();
+  }
+
+  const verifyAdmin = async(req, res, next) => {
+
+    if(req.user?.userRole !== 'admin')    
+{
+      return res.status(403).send({message: 'Forbidden access'});
+    } 
+  }
+
 
     // ================= BOOKS =================
     app.get("/api/books", async (req, res) => {
@@ -102,7 +150,7 @@ app.get("/api/writers/top", async (req, res) => {
       res.send(result);
     });
 
-    app.patch("/api/books/:id", logger, verifyToken, async (req, res) => {
+    app.patch("/api/books/:id", verifyToken, verifyWriter,async (req, res) => {
       const id = req.params.id;
       if(!ObjectId.isValid(id)) {
         return res.status(400).send({ message: "Invalid book id" });
@@ -133,7 +181,7 @@ app.get("/api/writers/top", async (req, res) => {
       res.send(result);
     });
 
-    app.patch("/api/books/:id/status", async (req, res) => {
+    app.patch("/api/books/:id/status", verifyToken, verifyAdmin, async (req, res) => {
       const id = req.params.id;
       if(!ObjectId.isValid(id)) {
         return res.status(400).send({ message: "Invalid book id" });
@@ -146,7 +194,7 @@ app.get("/api/writers/top", async (req, res) => {
       res.send(result);
     });
 
-    app.post("/api/books", async (req, res) => {
+    app.post("/api/books",verifyToken, verifyWriter, async (req, res) => {
       const result = await booksCollection.insertOne(req.body);
       res.status(201).send(result);
     });
@@ -197,7 +245,7 @@ app.get("/api/writers/top", async (req, res) => {
       res.send({ purchased: !!purchase });
     });
 
-    app.get("/api/purchases", async (req, res) => {
+    app.get("/api/purchases", verifyToken, async (req, res) => {
       const result = await purchasesCollection
         .find({ buyerEmail: req.query.email })
         .toArray();
@@ -214,7 +262,7 @@ app.get("/api/writers/top", async (req, res) => {
     });
     
     // ================= BOOKMARKS =================
-    app.post("/api/bookmarks", async (req, res) => {
+    app.post("/api/bookmarks", verifyToken, async (req, res) => {
       const bookmark = req.body;
 
       const existing = await bookmarksCollection.findOne({
@@ -230,7 +278,7 @@ app.get("/api/writers/top", async (req, res) => {
       res.status(201).send(result);
     });
 
-    app.delete("/api/bookmarks", async (req, res) => {
+    app.delete("/api/bookmarks",verifyToken, async (req, res) => {
       const result = await bookmarksCollection.deleteOne({
         bookId: req.body.bookId,
         userEmail: req.body.userEmail,
@@ -248,17 +296,19 @@ app.get("/api/writers/top", async (req, res) => {
       res.send({ bookmarked: !!bookmark });
     });
 
-    app.get("/api/bookmarks", async (req, res) => {
+    app.get("/api/bookmarks",logger, verifyToken, async (req, res) => {
       const result = await bookmarksCollection
         .find({ userEmail: req.query.email })
         .toArray();
+
+      console
 
       res.send(result);
     });
     // ================= TRANSACTIONS =================
 // Paste inside run(), alongside your other routes.
 
-app.get("/api/transactions", async (req, res) => {
+app.get("/api/transactions", verifyToken, verifyAdmin, async (req, res) => {
   const transactions = await purchasesCollection.aggregate([
     {
       $project: {
